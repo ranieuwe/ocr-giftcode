@@ -1,4 +1,4 @@
-# Gift Code Redemption Script
+# Whiteout Survival Gift Code Redemption Script
 
 Just a simple Python script that automates the process of redeeming gift codes in the game **Whiteout Survival**. It reads a list of Player IDs from a `.csv` file, sends requests to the game's giftcode redemption API, and redeems the specified gift code for each player.
 
@@ -95,12 +95,6 @@ Result: SUCCESS
 
 ---
 
-## License
-
-This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) file for details.
-
----
-
 ## Troubleshooting
 
 ### Common Issues
@@ -125,12 +119,6 @@ This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) fil
 
 ---
 
-## Support
-
-If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/your-username/gift-code-redemption/issues).
-
----
-
 ## Changelog
 
 ### v1.0.0 (Initial Release)
@@ -144,3 +132,15 @@ If you encounter any issues or have questions, feel free to open an issue on the
 
 - **Author**: justncodes (\[SIR\] Yolo on #340)
 - **Repository**: [wos-giftcode](https://github.com/justncodes/wos-giftcode)
+
+---
+
+## Support
+
+If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/your-username/gift-code-redemption/issues).
+
+---
+
+## License
+
+This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) file for details.
