@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 import hashlib
@@ -5,13 +6,25 @@ import json
 import csv
 import argparse
 import sys
+from datetime import datetime
 
 # Configuration
 LOGIN_URL = "https://wos-giftcode-api.centurygame.com/api/player"
-REDEEM_URL = "https://wos-giftcode-api.centurygame.com/api/gift_code"  # Updated URL
+REDEEM_URL = "https://wos-giftcode-api.centurygame.com/api/gift_code"
 WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"  # The secret key
 
-# Function to generate the sign
+script_dir = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
+
+# Log messages to file and console
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"{timestamp} - {message}"
+    print(log_entry)
+    with open(LOG_FILE, "a") as f:
+        f.write(log_entry + "\n")
+
+# Generate the sign, an MD5 hash sent with the POST payload
 def encode_data(data):
     secret = WOS_ENCRYPT_KEY
     sorted_keys = sorted(data.keys())
@@ -24,31 +37,35 @@ def encode_data(data):
     sign = hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest()
     return {"sign": sign, **data}
 
-# Function to redeem a gift code for a player
+# Redeem a gift code for a player and return the response
 def redeem_gift_code(fid, cdk):
-    # Step 1: Login (first POST request)
-    login_params = {
-        "fid": fid,
-        "time": int(time.time() * 1000)  # Current timestamp in milliseconds
-    }
-    login_payload = encode_data(login_params)
+    try:
+        # Step 1: Login (first POST request)
+        login_params = {
+            "fid": fid,
+            "time": int(time.time() * 1000)  # Current timestamp in milliseconds
+        }
+        login_payload = encode_data(login_params)
+        
+        login_resp = requests.post(LOGIN_URL, json=login_payload)
+        if login_resp.json().get("code") != 0:
+            return {"status": "Failed", "message": "Login error", "response": login_resp.json()}
+        
+        # Step 2: Redeem Gift Code (second POST request)
+        redeem_params = {
+            "fid": fid,
+            "cdk": cdk,
+            "time": int(time.time() * 1000)
+        }
+        redeem_payload = encode_data(redeem_params)
+        
+        redeem_resp = requests.post(REDEEM_URL, json=redeem_payload)
+        return redeem_resp.json()
     
-    login_resp = requests.post(LOGIN_URL, json=login_payload)
-    if login_resp.json().get("code") != 0:
-        return {"status": "Failed", "message": "Login error", "response": login_resp.json()}
-    
-    # Step 2: Redeem Gift Code (second POST request)
-    redeem_params = {
-        "fid": fid,
-        "cdk": cdk,
-        "time": int(time.time() * 1000)  # Current timestamp in milliseconds
-    }
-    redeem_payload = encode_data(redeem_params)
-    
-    redeem_resp = requests.post(REDEEM_URL, json=redeem_payload)
-    return redeem_resp.json()
+    except Exception as e:
+        return {"msg": f"Error: {str(e)}"}
 
-# Function to read player IDs from a CSV file
+# Read player IDs from a CSV file
 def read_player_ids_from_csv(file_path):
     player_ids = []
     with open(file_path, mode="r", newline="") as file:
@@ -66,25 +83,30 @@ if __name__ == "__main__":
     parser.add_argument("--code", required=True, help="The gift code to redeem.")
     args = parser.parse_args()
 
-    # Validate the CSV file path
+    # Log initialization message
+    start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log(f"\n=== Starting redemption for gift code: {args.code} at {start_time} ===")
+
+    # Read player IDs from CSV file
     try:
-        player_ids = read_player_ids_from_csv(args.csv)
-        print(f"Loaded {len(player_ids)} player IDs from {args.csv}.")
+        with open(args.csv, "r") as f:
+            player_ids = [row[0].strip() for row in csv.reader(f) if row]
+        log(f"Loaded {len(player_ids)} player IDs from {args.csv}")
     except FileNotFoundError:
-        print(f"Error: File '{args.csv}' not found.")
+        log(f"Error: CSV file '{args.csv}' not found")
         sys.exit(1)
     except Exception as e:
-        print(f"Error reading CSV file: {e}")
+        log(f"Error reading CSV file: {e}")
         sys.exit(1)
 
     # Validate the gift code
     if not args.code:
-        print("Error: Gift code is required.")
+        log("Error: Gift code is required.")
         sys.exit(1)
 
     # Redeem gift code for each player
     for fid in player_ids:
-        print(f"Processing Player ID: {fid}...")
+        log(f"Processing Player ID: {fid}...")
         result = redeem_gift_code(fid, args.code)
-        print(f"Result: {result['msg']}")
+        log(f"Result: {result.get('msg', 'Unknown error')}")
         time.sleep(1)  # Avoid rate limiting
