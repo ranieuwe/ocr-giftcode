@@ -127,7 +127,7 @@ if __name__ == "__main__":
         
         raw_msg = result.get('msg', 'Unknown error')
         friendly_msg = RESULT_MESSAGES.get(raw_msg.strip('.'), raw_msg)
-        print(raw_msg)
+        
         # Exit immediately if code is expired
         if raw_msg == 'TIME ERROR.':
             log("Stopping redemption process - code has expired")
