@@ -12,9 +12,17 @@ from datetime import datetime
 LOGIN_URL = "https://wos-giftcode-api.centurygame.com/api/player"
 REDEEM_URL = "https://wos-giftcode-api.centurygame.com/api/gift_code"
 WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"  # The secret key
+MAX_RETRIES = 3  # Max retry attempts per request
+RETRY_DELAY = 2  # Seconds between retries
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.abspath(__file__)) # store log in same directory as script
 LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
+
+RESULT_MESSAGES = {
+    "SUCCESS": "Successfully redeemed",
+    "RECEIVED": "Already redeemed",
+    "TIME ERROR": "Code has expired",
+}
 
 # Log messages to file and console
 def log(message):
@@ -34,33 +42,41 @@ def encode_data(data):
             for key in sorted_keys
         ]
     )
-    sign = hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest()
-    return {"sign": sign, **data}
+    return {"sign": hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest(), **data}
+
+# Send POST and handle retries if failed
+def make_request(url, payload):
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(url, json=payload)
+            if response.status_code == 200:
+                return response
+            log(f"Attempt {attempt+1} failed: HTTP {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            log(f"Attempt {attempt+1} failed: {str(e)}")
+        
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(RETRY_DELAY)
+    
+    return None
 
 # Redeem a gift code for a player and return the response
 def redeem_gift_code(fid, cdk):
     try:
-        # Step 1: Login (first POST request)
-        login_params = {
-            "fid": fid,
-            "time": int(time.time() * 1000)  # Current timestamp in milliseconds
-        }
-        login_payload = encode_data(login_params)
+        login_payload = encode_data({"fid": fid, "time": int(time.time() * 1000)})
+        login_resp = make_request(LOGIN_URL, login_payload)
         
-        login_resp = requests.post(LOGIN_URL, json=login_payload)
-        if login_resp.json().get("code") != 0:
-            return {"status": "Failed", "message": "Login error", "response": login_resp.json()}
-        
-        # Step 2: Redeem Gift Code (second POST request)
-        redeem_params = {
+        if not login_resp or login_resp.json().get("code") != 0:
+            return {"msg": "Login failed"}
+
+        redeem_payload = encode_data({
             "fid": fid,
             "cdk": cdk,
             "time": int(time.time() * 1000)
-        }
-        redeem_payload = encode_data(redeem_params)
-        
-        redeem_resp = requests.post(REDEEM_URL, json=redeem_payload)
-        return redeem_resp.json()
+        })
+        redeem_resp = make_request(REDEEM_URL, redeem_payload)
+
+        return redeem_resp.json() if redeem_resp else {"msg": "Redemption failed"}
     
     except Exception as e:
         return {"msg": f"Error: {str(e)}"}
@@ -71,8 +87,8 @@ def read_player_ids_from_csv(file_path):
     with open(file_path, mode="r", newline="") as file:
         reader = csv.reader(file)
         for row in reader:
-            if row:  # Skip empty rows
-                player_ids.append(row[0])  # Assuming player IDs are in the first column
+            if row:
+                player_ids.append(row[0])
     return player_ids
 
 # Main script
@@ -106,7 +122,16 @@ if __name__ == "__main__":
 
     # Redeem gift code for each player
     for fid in player_ids:
-        log(f"Processing Player ID: {fid}...")
+        log(f"Processing Player ID: {fid}")
         result = redeem_gift_code(fid, args.code)
-        log(f"Result: {result.get('msg', 'Unknown error')}")
-        time.sleep(1)  # Avoid rate limiting
+        
+        raw_msg = result.get('msg', 'Unknown error')
+        friendly_msg = RESULT_MESSAGES.get(raw_msg.strip('.'), raw_msg)
+        print(raw_msg)
+        # Exit immediately if code is expired
+        if raw_msg == 'TIME ERROR.':
+            log("Stopping redemption process - code has expired")
+            sys.exit(1)
+        
+        log(f"Result: {friendly_msg}")
+        time.sleep(1)
