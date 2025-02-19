@@ -28,8 +28,15 @@ RESULT_MESSAGES = {
 def log(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} - {message}"
-    print(log_entry)
-    with open(LOG_FILE, "a") as f:
+
+    try:
+        print(log_entry)
+    except UnicodeEncodeError:
+        cleaned = log_entry.encode('utf-8', errors='replace').decode('ascii', errors='replace')
+        print(cleaned)
+    
+    # Handle file output with UTF-8
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry + "\n")
 
 # Generate the sign, an MD5 hash sent with the POST payload
@@ -66,8 +73,13 @@ def redeem_gift_code(fid, cdk):
         login_payload = encode_data({"fid": fid, "time": int(time.time() * 1000)})
         login_resp = make_request(LOGIN_URL, login_payload)
         
-        if not login_resp or login_resp.json().get("code") != 0:
-            return {"msg": "Login failed"}
+        nickname = None
+        if login_resp and login_resp.json().get("code") == 0:
+            nickname = login_resp.json().get("data", {}).get("nickname")
+        else:
+            return {"msg": f"Login failed for {nickname}"}
+        
+        log(f"Processing {nickname or 'Unknown Player'} ({fid})")
 
         redeem_payload = encode_data({
             "fid": fid,
@@ -76,7 +88,7 @@ def redeem_gift_code(fid, cdk):
         })
         redeem_resp = make_request(REDEEM_URL, redeem_payload)
 
-        return redeem_resp.json() if redeem_resp else {"msg": "Redemption failed"}
+        return redeem_resp.json() if redeem_resp else {"msg": f"Redemption failed for {nickname}"}
     
     except Exception as e:
         return {"msg": f"Error: {str(e)}"}
@@ -122,14 +134,13 @@ if __name__ == "__main__":
 
     # Redeem gift code for each player
     for fid in player_ids:
-        log(f"Processing Player ID: {fid}")
         result = redeem_gift_code(fid, args.code)
         
-        raw_msg = result.get('msg', 'Unknown error')
-        friendly_msg = RESULT_MESSAGES.get(raw_msg.strip('.'), raw_msg)
+        raw_msg = result.get('msg', 'Unknown error').strip('.')
+        friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
         
         # Exit immediately if code is expired
-        if raw_msg == 'TIME ERROR.':
+        if raw_msg == 'TIME ERROR':
             log("Stopping redemption process - code has expired")
             sys.exit(1)
         
