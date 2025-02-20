@@ -12,8 +12,11 @@ from datetime import datetime
 LOGIN_URL = "https://wos-giftcode-api.centurygame.com/api/player"
 REDEEM_URL = "https://wos-giftcode-api.centurygame.com/api/gift_code"
 WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"  # The secret key
-MAX_RETRIES = 3  # Max retry attempts per request
+
+DELAY = 1 # Seconds between each redemption, less than 1s may result in being blocked
 RETRY_DELAY = 2  # Seconds between retries
+MAX_RETRIES = 3  # Max retry attempts per request
+
 
 script_dir = os.path.dirname(os.path.abspath(__file__)) # store log in same directory as script
 LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
@@ -22,6 +25,7 @@ RESULT_MESSAGES = {
     "SUCCESS": "Successfully redeemed",
     "RECEIVED": "Already redeemed",
     "TIME ERROR": "Code has expired",
+    "TIMEOUT RETRY": "Server requested retry",
 }
 
 # Log messages to file and console
@@ -31,11 +35,11 @@ def log(message):
 
     try:
         print(log_entry)
+
     except UnicodeEncodeError:
         cleaned = log_entry.encode('utf-8', errors='replace').decode('ascii', errors='replace')
         print(cleaned)
     
-    # Handle file output with UTF-8
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(log_entry + "\n")
 
@@ -43,12 +47,14 @@ def log(message):
 def encode_data(data):
     secret = WOS_ENCRYPT_KEY
     sorted_keys = sorted(data.keys())
+
     encoded_data = "&".join(
         [
             f"{key}={json.dumps(data[key]) if isinstance(data[key], dict) else data[key]}"
             for key in sorted_keys
         ]
     )
+
     return {"sign": hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest(), **data}
 
 # Send POST and handle retries if failed
@@ -56,9 +62,19 @@ def make_request(url, payload):
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, json=payload)
+
             if response.status_code == 200:
+                response_data = response.json()
+                if response_data.get("msg") == "TIMEOUT RETRY":
+                    log(f"Attempt {attempt+1}: Server requested retry (TIMEOUT RETRY)")
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_DELAY)
+                        continue
+                
                 return response
+            
             log(f"Attempt {attempt+1} failed: HTTP {response.status_code}")
+
         except requests.exceptions.RequestException as e:
             log(f"Attempt {attempt+1} failed: {str(e)}")
         
@@ -141,8 +157,8 @@ if __name__ == "__main__":
         
         # Exit immediately if code is expired
         if raw_msg == 'TIME ERROR':
-            log("Stopping redemption process - code has expired")
+            log("Code has expired! Script will now exit.")
             sys.exit(1)
         
         log(f"Result: {friendly_msg}")
-        time.sleep(1)
+        time.sleep(DELAY)
