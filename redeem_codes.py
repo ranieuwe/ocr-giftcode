@@ -17,7 +17,6 @@ DELAY = 1 # Seconds between each redemption, less than 1s may result in being bl
 RETRY_DELAY = 2  # Seconds between retries
 MAX_RETRIES = 3  # Max retry attempts per request
 
-
 script_dir = os.path.dirname(os.path.abspath(__file__)) # store log in same directory as script
 LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
 
@@ -62,19 +61,21 @@ def make_request(url, payload):
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, json=payload)
-
+            
             if response.status_code == 200:
                 response_data = response.json()
-                if response_data.get("msg") == "TIMEOUT RETRY":
-                    log(f"Attempt {attempt+1}: Server requested retry (TIMEOUT RETRY)")
+                if response_data.get("msg", "").strip('.') == "TIMEOUT RETRY":
                     if attempt < MAX_RETRIES - 1:
+                        log(f"Attempt {attempt+1}: Server requested retry")
                         time.sleep(RETRY_DELAY)
                         continue
+                    else:
+                        return response
                 
                 return response
             
             log(f"Attempt {attempt+1} failed: HTTP {response.status_code}")
-
+        
         except requests.exceptions.RequestException as e:
             log(f"Attempt {attempt+1} failed: {str(e)}")
         
@@ -89,12 +90,10 @@ def redeem_gift_code(fid, cdk):
         login_payload = encode_data({"fid": fid, "time": int(time.time() * 1000)})
         login_resp = make_request(LOGIN_URL, login_payload)
         
-        nickname = None
-        if login_resp and login_resp.json().get("code") == 0:
-            nickname = login_resp.json().get("data", {}).get("nickname")
-        else:
-            return {"msg": f"Login failed for {nickname}"}
-        
+        if not login_resp or login_resp.json().get("code") != 0:
+            return {"msg": "Login failed"}
+
+        nickname = login_resp.json().get("data", {}).get("nickname")
         log(f"Processing {nickname or 'Unknown Player'} ({fid})")
 
         redeem_payload = encode_data({
@@ -102,9 +101,9 @@ def redeem_gift_code(fid, cdk):
             "cdk": cdk,
             "time": int(time.time() * 1000)
         })
-        redeem_resp = make_request(REDEEM_URL, redeem_payload)
 
-        return redeem_resp.json() if redeem_resp else {"msg": f"Redemption failed for {nickname}"}
+        redeem_resp = make_request(REDEEM_URL, redeem_payload)
+        return redeem_resp.json() if redeem_resp else {"msg": "Redemption failed"}
     
     except Exception as e:
         return {"msg": f"Error: {str(e)}"}
