@@ -9,6 +9,9 @@ Just a simple Python script that automates the process of redeeming gift codes i
 - **CSV Import**: Reads player IDs from a `.csv` file. Each ID should be on a new line.
 - **Command-Line Interface**: Accepts the `.csv` file path and gift code as arguments.
 - **Error Handling**: Provides clear error messages for missing or invalid inputs.
+- **Retry Logic**: Automatically retries failed requests when the server is busy.
+- **Verbose Logging**: Shows timestamp, player nickname and ID during processing and logs them to a file.
+- **Summary Report**: Provides a summary of successful redemptions, already redeemed codes, and errors at the end.
 - **Rate Limiting**: Adds a delay between requests to avoid triggering rate limits.
 
 ---
@@ -16,7 +19,7 @@ Just a simple Python script that automates the process of redeeming gift codes i
 ## Prerequisites
 
 1. **Python 3.x**: Download and install Python from [python.org](https://www.python.org/).
-2. **Required Libraries**: Install the required Python libraries using `pip`:
+2. **Required Libraries**: Install the required Python libraries using `pip` from the command line:
    ```bash
    pip install requests
    ```
@@ -29,9 +32,11 @@ Just a simple Python script that automates the process of redeeming gift codes i
    git clone https://github.com/justncodes/wos-giftcode.git
    cd wos-giftcode
    ```
+   ...or just [download the script](https://github.com/justncodes/wos-giftcode/blob/main/redeem_codes.py) directly.
 
 2. **Prepare the CSV File**:
    - Create a `.csv` file (e.g., `player_ids.csv`) with one player ID per row.
+   - Put the `.csv` file into the same folder as the script to avoid entering a path.
    - Example `player_ids.csv`:
      ```csv
      57845354
@@ -64,34 +69,28 @@ python redeem_codes.py --csv player_ids.csv --code ILoveU
 
 ## Output
 
-### Successful Run
+### Sample Run
 
 ```plaintext
-Loaded 3 player IDs from player_ids.csv.
-Processing Player ID: 57845354...
-Result: SUCCESS
-Processing Player ID: 98765432...
-Result: RECEIVED.
-Processing Player ID: 12345678...
-Result: SUCCESS
+2025-02-20 22:00:00 - === Starting redemption for gift code: ILoveU at 2025-02-20 22:00:00 ===
+2025-02-20 22:00:00 - Loaded 3 player IDs from player_ids.csv
+2025-02-20 22:00:00 - Processing Cerberus (90321114)
+2025-02-20 22:00:00 - Attempt 1: Server requested retry (TIMEOUT RETRY)
+2025-02-20 22:00:02 - Result: Successfully redeemed
+2025-02-20 22:00:03 - Processing Unknown Player (98765432)
+2025-02-20 22:00:03 - Result: Already redeemed
+2025-02-20 22:00:04 - Processing Amy (12345678)
+2025-02-20 22:00:04 - Result: Error: Redemption failed
+
+=== Redemption Summary ===
+Successfully redeemed: 1
+Already redeemed: 1
+Errors: 1
 ```
 
----
+### Logging
 
-## How It Works
-
-1. **CSV Import**:
-   - The script reads player IDs from the specified `.csv` file.
-
-2. **API Requests**:
-   - Sends a login request to validate the player ID.
-   - Sends a redemption request to redeem the gift code.
-
-3. **Sign Generation**:
-   - Uses a secret key (`WOS_ENCRYPT_KEY`) to generate a `sign` parameter for each request.
-
-4. **Rate Limiting**:
-   - Adds a 1-second delay between requests to avoid being blocked.
+The script will append all output to a log file called redeemed_codes.txt in the same folder as the script.
 
 ---
 
@@ -107,19 +106,24 @@ Result: SUCCESS
    - Verify that the gift code is correct and has not expired.
 
 3. **API Rate Limiting**:
-   - If the script is blocked, increase the delay between requests (`time.sleep(2)`).
+   - If the script is blocked too often, try increasing the DELAY between requests (line 16).
 
 ---
 
 ## Future Enhancements
 
-- **Logging**: Add logging to track successful and failed redemptions.
-- **Retry Logic**: Implement retries for failed requests.
 - **GUI**: Create a simple graphical interface for non-technical users.
 
 ---
 
 ## Changelog
+
+### v2.0.0 (Current Version)
+- Added retry logic for failed requests (e.g., `TIMEOUT RETRY`).
+- Display player nicknames during processing.
+- Added Unicode support for special characters and foreign alphabets.
+- Added a summary report of redemptions at the end.
+- Improved error handling and logging.
 
 ### v1.0.0 (Initial Release)
 - Added support for CSV import and command-line arguments.
@@ -137,7 +141,7 @@ Result: SUCCESS
 
 ## Support
 
-If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/your-username/gift-code-redemption/issues).
+If you encounter any issues or have questions, feel free to open an issue on the [GitHub repository](https://github.com/justncodes/wos-giftcode/issues).
 
 ---
 
