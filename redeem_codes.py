@@ -27,6 +27,12 @@ RESULT_MESSAGES = {
     "TIMEOUT RETRY": "Server requested retry",
 }
 
+counters = {
+    "success": 0,
+    "already_redeemed": 0,
+    "errors": 0,
+}
+
 # Log messages to file and console
 def log(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -118,6 +124,13 @@ def read_player_ids_from_csv(file_path):
                 player_ids.append(row[0])
     return player_ids
 
+# Print summary of actions
+def print_summary():
+    log("\n=== Redemption Complete ===")
+    log(f"Successfully redeemed: {counters['success']}")
+    log(f"Already redeemed: {counters['already_redeemed']}")
+    log(f"Errors: {counters['errors']}")
+
 # Main script
 if __name__ == "__main__":
     # Set up command-line argument parsing
@@ -147,17 +160,25 @@ if __name__ == "__main__":
         log("Error: Gift code is required.")
         sys.exit(1)
 
-    # Redeem gift code for each player
+    # Redeem gift code for each player, update counters
     for fid in player_ids:
         result = redeem_gift_code(fid, args.code)
-        
+
         raw_msg = result.get('msg', 'Unknown error').strip('.')
         friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
-        
-        # Exit immediately if code is expired
-        if raw_msg == 'TIME ERROR':
+
+        if raw_msg == "SUCCESS":
+            counters["success"] += 1
+        elif raw_msg == "RECEIVED":
+            counters["already_redeemed"] += 1
+        elif raw_msg == "TIME ERROR":
             log("Code has expired! Script will now exit.")
+            print_summary()
             sys.exit(1)
-        
+        else:
+            counters["errors"] += 1
+
         log(f"Result: {friendly_msg}")
         time.sleep(DELAY)
+
+    print_summary()
