@@ -130,7 +130,11 @@ The script will append all output to a log file called redeemed_codes.txt in the
 
 ## Changelog
 
-### v2.0.0 (Current Version)
+### v2.1.0 (Current Version)
+- Added support for processing all .csv files in a folder or the script's directory using *.csv.
+- Improved error handling for missing or invalid .csv files.
+
+### v2.0.0
 - Added retry logic for failed requests (e.g., `TIMEOUT RETRY`).
 - Display player nicknames during processing.
 - Added Unicode support for special characters and foreign alphabets.
