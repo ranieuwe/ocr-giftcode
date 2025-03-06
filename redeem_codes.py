@@ -179,7 +179,6 @@ if __name__ == "__main__":
                     counters["already_redeemed"] += 1
                 elif raw_msg == "TIME ERROR":
                     log("Code has expired! Script will now exit.")
-                    print_summary()
                     sys.exit(1)
                 else:
                     counters["errors"] += 1
