@@ -1,13 +1,13 @@
 # Whiteout Survival Gift Code Redemption Script
 
-Just a simple Python script that automates the process of redeeming gift codes in the game **Whiteout Survival**. It reads a list of Player IDs from a `.csv` file, sends requests to the game's giftcode redemption API, and redeems the specified gift code for each player.
+Python script that automates the process of redeeming gift codes in the game **Whiteout Survival**. It reads a list of Player IDs from one or more `.csv` files, sends requests to the game's giftcode redemption API, and redeems the specified gift code for each player.
 
 ---
 
 ## Features
 
 - **CSV Import**: Reads player IDs from a `.csv` file. Each ID should be on a new line.
-- **Command-Line Interface**: Accepts the `.csv` file path and gift code as arguments.
+- **Command-Line Interface**: Accepts the `.csv` file path (or `*.csv`) and gift code as arguments.
 - **Error Handling**: Provides clear error messages for missing or invalid inputs.
 - **Retry Logic**: Automatically retries failed requests when the server is busy.
 - **Verbose Logging**: Shows timestamp, player nickname and ID during processing and logs them to a file.
@@ -23,6 +23,7 @@ Just a simple Python script that automates the process of redeeming gift codes i
    ```bash
    pip install requests
    ```
+
 ---
 
 ## Setup
@@ -56,13 +57,24 @@ python redeem_codes.py --csv <path_to_csv> --code <gift_code>
 
 ### Arguments
 
-- `--csv`: Path to the `.csv` file containing player IDs.
+- `--csv`: Path to the `.csv` file containing player IDs, or `*.csv` to process all `.csv` files in the script directory.
 - `--code`: The gift code to redeem.
 
 ### Example
 
+Process a specific `.csv` file
 ```bash
 python redeem_codes.py --csv player_ids.csv --code ILoveU
+```
+
+Process all `.csv` files in a specific folder
+```bash
+python redeem_codes.py --csv /path/to/folder --code ILoveU
+```
+
+Process all `.csv` files in the script's directory
+```bash
+python redeem_codes.py --csv *.csv --code ILoveU
 ```
 
 ---

@@ -7,6 +7,7 @@ import csv
 import argparse
 import sys
 from datetime import datetime
+from glob import glob
 
 # Configuration
 LOGIN_URL = "https://wos-giftcode-api.centurygame.com/api/player"
@@ -135,7 +136,7 @@ def print_summary():
 if __name__ == "__main__":
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(description="Redeem gift codes for player IDs from a CSV file.")
-    parser.add_argument("--csv", required=True, help="Path to the CSV file containing player IDs.")
+    parser.add_argument("--csv", required=True, help="Path to the CSV file containing player IDs (or *.csv for all files in a folder).")
     parser.add_argument("--code", required=True, help="The gift code to redeem.")
     args = parser.parse_args()
 
@@ -143,42 +144,53 @@ if __name__ == "__main__":
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log(f"\n=== Starting redemption for gift code: {args.code} at {start_time} ===")
 
-    # Read player IDs from CSV file
-    try:
-        with open(args.csv, "r") as f:
-            player_ids = [row[0].strip() for row in csv.reader(f) if row]
-        log(f"Loaded {len(player_ids)} player IDs from {args.csv}")
-    except FileNotFoundError:
-        log(f"Error: CSV file '{args.csv}' not found")
-        sys.exit(1)
-    except Exception as e:
-        log(f"Error reading CSV file: {e}")
-        sys.exit(1)
-
-    # Validate the gift code
-    if not args.code:
-        log("Error: Gift code is required.")
-        sys.exit(1)
-
-    # Redeem gift code for each player, update counters
-    for fid in player_ids:
-        result = redeem_gift_code(fid, args.code)
-
-        raw_msg = result.get('msg', 'Unknown error').strip('.')
-        friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
-
-        if raw_msg == "SUCCESS":
-            counters["success"] += 1
-        elif raw_msg == "RECEIVED":
-            counters["already_redeemed"] += 1
-        elif raw_msg == "TIME ERROR":
-            log("Code has expired! Script will now exit.")
-            print_summary()
-            sys.exit(1)
+    # Handle *.csv input
+    if args.csv == "*.csv":
+        # Use the script's directory if no folder is specified
+        csv_files = glob(os.path.join(script_dir, "*.csv"))
+    else:
+        # Use the specified folder or file
+        if os.path.isdir(args.csv):
+            csv_files = glob(os.path.join(args.csv, "*.csv"))
         else:
-            counters["errors"] += 1
+            csv_files = [args.csv]
 
-        log(f"Result: {friendly_msg}")
-        time.sleep(DELAY)
+    if not csv_files:
+        log("Error: No CSV files found.")
+        sys.exit(1)
 
+    # Process all CSV files
+    for csv_file in csv_files:
+        try:
+            player_ids = read_player_ids_from_csv(csv_file)
+            log(f"Loaded {len(player_ids)} player IDs from {csv_file}")
+
+            # Redeem gift code for each player
+            for fid in player_ids:
+                result = redeem_gift_code(fid, args.code)
+
+                raw_msg = result.get('msg', 'Unknown error').strip('.')
+                friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
+
+                # Update counters based on result
+                if raw_msg == "SUCCESS":
+                    counters["success"] += 1
+                elif raw_msg == "RECEIVED":
+                    counters["already_redeemed"] += 1
+                elif raw_msg == "TIME ERROR":
+                    log("Code has expired! Script will now exit.")
+                    print_summary()
+                    sys.exit(1)
+                else:
+                    counters["errors"] += 1
+
+                log(f"Result: {friendly_msg}")
+                time.sleep(DELAY)
+
+        except FileNotFoundError:
+            log(f"Error: CSV file '{csv_file}' not found")
+        except Exception as e:
+            log(f"Error processing {csv_file}: {str(e)}")
+
+    # Print final summary
     print_summary()
