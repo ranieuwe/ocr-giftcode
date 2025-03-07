@@ -26,6 +26,7 @@ RESULT_MESSAGES = {
     "RECEIVED": "Already redeemed",
     "TIME ERROR": "Code has expired",
     "TIMEOUT RETRY": "Server requested retry",
+    "USED": "Claim limit reached, unable to claim",
 }
 
 counters = {
@@ -172,14 +173,21 @@ if __name__ == "__main__":
                 raw_msg = result.get('msg', 'Unknown error').strip('.')
                 friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
 
+                # Exit immediately if code is expired or claim limit reached
+                if raw_msg == "TIME ERROR":
+                    log("Code has expired! Script will now exit.")
+                    print_summary()
+                    sys.exit(1)
+                elif raw_msg == "USED":
+                    log("Claim limit reached! Script will now exit.")
+                    print_summary()
+                    sys.exit(1)
+
                 # Update counters based on result
                 if raw_msg == "SUCCESS":
                     counters["success"] += 1
                 elif raw_msg == "RECEIVED":
                     counters["already_redeemed"] += 1
-                elif raw_msg == "TIME ERROR":
-                    log("Code has expired! Script will now exit.")
-                    sys.exit(1)
                 else:
                     counters["errors"] += 1
 
