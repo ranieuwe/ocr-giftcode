@@ -24,6 +24,7 @@ LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
 RESULT_MESSAGES = {
     "SUCCESS": "Successfully redeemed",
     "RECEIVED": "Already redeemed",
+    "SAME TYPE EXCHANGE": "Same type already redeemed",
     "TIME ERROR": "Code has expired",
     "TIMEOUT RETRY": "Server requested retry",
     "USED": "Claim limit reached, unable to claim",
@@ -186,8 +187,10 @@ if __name__ == "__main__":
                 # Update counters based on result
                 if raw_msg == "SUCCESS":
                     counters["success"] += 1
-                elif raw_msg == "RECEIVED":
+                elif raw_msg in ["RECEIVED", "SAME TYPE EXCHANGE"]:
                     counters["already_redeemed"] += 1
+                elif raw_msg == "TIMEOUT RETRY":
+                    pass
                 else:
                     counters["errors"] += 1
 
