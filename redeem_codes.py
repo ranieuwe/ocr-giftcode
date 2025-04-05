@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# Whiteout Gift Code Redeemer Script Version 2.2.0
+# See https://github.com/justncodes/wos-giftcode
+
 import os
 import requests
 import time
@@ -24,7 +28,7 @@ LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
 RESULT_MESSAGES = {
     "SUCCESS": "Successfully redeemed",
     "RECEIVED": "Already redeemed",
-    "SAME TYPE EXCHANGE": "Same type already redeemed",
+    "SAME TYPE EXCHANGE": "Successfully redeemed (same type)",
     "TIME ERROR": "Code has expired",
     "TIMEOUT RETRY": "Server requested retry",
     "USED": "Claim limit reached, unable to claim",
@@ -43,13 +47,16 @@ def log(message):
 
     try:
         print(log_entry)
-
     except UnicodeEncodeError:
         cleaned = log_entry.encode('utf-8', errors='replace').decode('ascii', errors='replace')
         print(cleaned)
-    
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(log_entry + "\n")
+
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(log_entry + "\n")
+    except Exception as e:
+        print(f"{timestamp} - LOGGING ERROR: Could not write to {LOG_FILE}. Error: {e}")
+        print(f"{timestamp} - ORIGINAL MESSAGE: {log_entry}")
 
 # Generate the sign, an MD5 hash sent with the POST payload
 def encode_data(data):
@@ -70,41 +77,64 @@ def make_request(url, payload):
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, json=payload)
-            
+
             if response.status_code == 200:
                 response_data = response.json()
-                if response_data.get("msg", "").strip('.') == "TIMEOUT RETRY":
+                msg_content = response_data.get("msg", "")
+                if isinstance(msg_content, str) and msg_content.strip('.') == "TIMEOUT RETRY":
                     if attempt < MAX_RETRIES - 1:
-                        log(f"Attempt {attempt+1}: Server requested retry")
+                        log(f"Attempt {attempt+1}: Server requested retry for payload: {payload.get('fid', 'N/A')}")
                         time.sleep(RETRY_DELAY)
                         continue
                     else:
+                        log(f"Attempt {attempt+1}: Max retries reached after server requested retry for payload: {payload.get('fid', 'N/A')}")
                         return response
-                
+
                 return response
-            
-            log(f"Attempt {attempt+1} failed: HTTP {response.status_code}")
-        
+
+            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: HTTP {response.status_code}, Response: {response.text[:200]}") # Log part of the response text
+
         except requests.exceptions.RequestException as e:
-            log(f"Attempt {attempt+1} failed: {str(e)}")
-        
+            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: RequestException: {str(e)}")
+        except json.JSONDecodeError as e:
+             log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: JSONDecodeError: {str(e)}. Response text: {response.text[:200]}") # Log if response is not valid JSON
+
         if attempt < MAX_RETRIES - 1:
             time.sleep(RETRY_DELAY)
-    
+
+    log(f"All {MAX_RETRIES} attempts failed for request to {url} with FID {payload.get('fid', 'N/A')}.")
     return None
 
 # Redeem a gift code for a player and return the response
 def redeem_gift_code(fid, cdk):
+    if not str(fid).strip().isdigit():
+        log(f"Skipping invalid FID: '{fid}'")
+        return {"msg": "Invalid FID format"}
+    fid = str(fid).strip()
+
     try:
+        # === Login Request ===
         login_payload = encode_data({"fid": fid, "time": int(time.time() * 1000)})
         login_resp = make_request(LOGIN_URL, login_payload)
-        
-        if not login_resp or login_resp.json().get("code") != 0:
-            return {"msg": "Login failed"}
 
-        nickname = login_resp.json().get("data", {}).get("nickname")
-        log(f"Processing {nickname or 'Unknown Player'} ({fid})")
+        if not login_resp:
+             return {"msg": "Login request failed after retries"}
 
+        try:
+            login_data = login_resp.json()
+            if login_data.get("code") != 0:
+                login_msg = login_data.get('msg', 'Unknown login error')
+                log(f"Login failed for {fid}: Code {login_data.get('code')}, Message: {login_msg}")
+                return {"msg": f"Login failed: {login_msg}"}
+
+            nickname = login_data.get("data", {}).get("nickname")
+            log(f"Processing {nickname or 'Unknown Player'} ({fid})")
+
+        except json.JSONDecodeError:
+             log(f"Login response for {fid} was not valid JSON: {login_resp.text[:200]}")
+             return {"msg": "Login response invalid JSON"}
+
+        # === Redeem Request ===
         redeem_payload = encode_data({
             "fid": fid,
             "cdk": cdk,
@@ -112,19 +142,56 @@ def redeem_gift_code(fid, cdk):
         })
 
         redeem_resp = make_request(REDEEM_URL, redeem_payload)
-        return redeem_resp.json() if redeem_resp else {"msg": "Redemption failed"}
-    
+
+        if not redeem_resp:
+            return {"msg": "Redemption request failed after retries"}
+
+        try:
+            return redeem_resp.json()
+        except json.JSONDecodeError:
+            log(f"Redemption response for {fid} was not valid JSON: {redeem_resp.text[:200]}")
+            return {"msg": "Redemption response invalid JSON"}
+
     except Exception as e:
-        return {"msg": f"Error: {str(e)}"}
+        log(f"Unexpected error during redemption for {fid}: {str(e)}")
+        return {"msg": f"Unexpected Error: {str(e)}"}
 
 # Read player IDs from a CSV file
 def read_player_ids_from_csv(file_path):
+    """
+    Reads player IDs from a CSV file.
+    Handles files where IDs are one per line, OR comma-separated on one or more lines.
+    Strips whitespace from each ID and ignores empty entries.
+    """
     player_ids = []
-    with open(file_path, mode="r", newline="") as file:
-        reader = csv.reader(file)
-        for row in reader:
-            if row:
-                player_ids.append(row[0])
+    format_detected = "newline" # Assume newline format initially
+    try:
+        # Using utf-8-sig to handle potential BOM (Byte Order Mark)
+        with open(file_path, mode="r", newline="", encoding="utf-8-sig") as file:
+            # Read a small sample to detect format more reliably
+            sample = "".join(file.readline() for _ in range(5))
+            if ',' in sample:
+                format_detected = "comma-separated"
+            file.seek(0)
+
+            log(f"Reading {file_path} (detected format: {format_detected})")
+            reader = csv.reader(file)
+            for row_num, row in enumerate(reader, 1):
+                for item in row:
+                    fid = item.strip()
+                    if fid:
+                        player_ids.append(fid)
+                    elif item and not fid:
+                        log(f"Warning: Ignoring whitespace-only entry in {file_path} on row {row_num}")
+                if not row and format_detected == "newline":
+                     log(f"Warning: Ignoring empty line in {file_path} on row {row_num}")
+
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        log(f"Error reading or processing CSV file {file_path}: {str(e)}")
+        return [] # Return empty list on other read errors, allowing script to continue
+
     return player_ids
 
 # Print summary of actions
@@ -132,7 +199,7 @@ def print_summary():
     log("\n=== Redemption Complete ===")
     log(f"Successfully redeemed: {counters['success']}")
     log(f"Already redeemed: {counters['already_redeemed']}")
-    log(f"Errors: {counters['errors']}")
+    log(f"Errors/Failures: {counters['errors']}")
 
 # Main script
 if __name__ == "__main__":
@@ -185,9 +252,9 @@ if __name__ == "__main__":
                     sys.exit(1)
 
                 # Update counters based on result
-                if raw_msg == "SUCCESS":
+                if raw_msg in ["SUCCESS", "SAME TYPE EXCHANGE"]:
                     counters["success"] += 1
-                elif raw_msg in ["RECEIVED", "SAME TYPE EXCHANGE"]:
+                elif raw_msg == "RECEIVED":
                     counters["already_redeemed"] += 1
                 elif raw_msg == "TIMEOUT RETRY":
                     pass
