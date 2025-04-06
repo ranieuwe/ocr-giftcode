@@ -52,7 +52,7 @@ def log(message):
         print(cleaned)
 
     try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
+        with open(LOG_FILE, "a", encoding="utf-8-sig") as f:
             f.write(log_entry + "\n")
     except Exception as e:
         print(f"{timestamp} - LOGGING ERROR: Could not write to {LOG_FILE}. Error: {e}")
@@ -92,12 +92,12 @@ def make_request(url, payload):
 
                 return response
 
-            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: HTTP {response.status_code}, Response: {response.text[:200]}") # Log part of the response text
+            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: HTTP {response.status_code}, Response: {response.text[:200]}")
 
         except requests.exceptions.RequestException as e:
             log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: RequestException: {str(e)}")
         except json.JSONDecodeError as e:
-             log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: JSONDecodeError: {str(e)}. Response text: {response.text[:200]}") # Log if response is not valid JSON
+             log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: JSONDecodeError: {str(e)}. Response text: {response.text[:200]}")
 
         if attempt < MAX_RETRIES - 1:
             time.sleep(RETRY_DELAY)
