@@ -1,29 +1,79 @@
 #!/usr/bin/env python3
-# Whiteout Gift Code Redeemer Script Version 2.2.0
-# See https://github.com/justncodes/wos-giftcode
+# Whiteout Gift Code Redeemer Script Version 2.3.0
+# EasyOCR Version
 
 import os
+import warnings
 import requests
 import time
+import random
 import hashlib
 import json
 import csv
 import argparse
 import sys
+import base64
+import easyocr
+import cv2
+import numpy as np
 from datetime import datetime
 from glob import glob
 
+warnings.filterwarnings("ignore", message=".*pin_memory.*", category=UserWarning)
+
 # Configuration
 LOGIN_URL = "https://wos-giftcode-api.centurygame.com/api/player"
+CAPTCHA_URL = "https://wos-giftcode-api.centurygame.com/api/captcha"
 REDEEM_URL = "https://wos-giftcode-api.centurygame.com/api/gift_code"
-WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"  # The secret key
+WOS_ENCRYPT_KEY = "tB87#kPtkxqOS2"
 
-DELAY = 1 # Seconds between each redemption, less than 1s may result in being blocked
-RETRY_DELAY = 2  # Seconds between retries
-MAX_RETRIES = 3  # Max retry attempts per request
+DELAY = 1
+RETRY_DELAY = 2
+MAX_RETRIES = 3
+CAPTCHA_RETRIES = 20
+CAPTCHA_SLEEP = 60
 
-script_dir = os.path.dirname(os.path.abspath(__file__)) # store log in same directory as script
+# Argument parsing
+def parse_args():
+    parser = argparse.ArgumentParser(description="Redeem gift codes with optional OCR settings and code sources")
+    parser.add_argument('--all-images', action='store_true', help='Save all captcha images regardless of OCR success')
+    parser.add_argument('--use-gpu', action='store_true', help='Enable GPU for EasyOCR reader')
+    parser.add_argument('--csv', type=str, help='Path to CSV file containing codes')
+    parser.add_argument('--code', type=str, help='Single code to redeem')
+    parser.add_argument('codes', nargs='*', help='Gift codes to redeem directly')
+    return parser.parse_args()
+
+args = parse_args()
+
+codes = []
+if args.csv:
+    try:
+        with open(args.csv, newline='', encoding='utf-8-sig') as csvfile:
+            csvreader = csv.reader(csvfile)
+            for row in csvreader:
+                codes.extend([c.strip() for c in row if c.strip()])
+    except Exception as e:
+        print(f"Error reading CSV file {args.csv}: {e}")
+if args.code:
+    codes.append(args.code)
+codes.extend(args.codes)
+args.codes = codes
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(script_dir, "redeemed_codes.txt")
+FAILED_CAPTCHA_DIR = os.path.join(script_dir, "failed_captchas")
+
+try:
+    os.makedirs(FAILED_CAPTCHA_DIR, exist_ok=True)
+    rel = os.path.relpath(FAILED_CAPTCHA_DIR, script_dir)
+    print(f"Created directory for captcha images: {rel}")
+except Exception as e:
+    print(f"Error creating directory: {str(e)}")
+
+# Initialize OCR reader based on args.use_gpu
+args.all_images = getattr(args, 'all_images', False)
+args.use_gpu = getattr(args, 'use_gpu', False)
+reader = easyocr.Reader(['en'], gpu=args.use_gpu)
 
 RESULT_MESSAGES = {
     "SUCCESS": "Successfully redeemed",
@@ -34,78 +84,108 @@ RESULT_MESSAGES = {
     "USED": "Claim limit reached, unable to claim",
 }
 
-counters = {
-    "success": 0,
-    "already_redeemed": 0,
-    "errors": 0,
-}
+counters = {"success": 0, "already_redeemed": 0, "errors": 0}
 
-# Log messages to file and console
+def save_captcha_image(img_np, fid, attempt, captcha_code):
+    try:
+        timestamp = int(time.time())
+        image_filename = f"fid{fid}_try{attempt}_OCR_{captcha_code}_{timestamp}.png"
+        full_path = os.path.join(FAILED_CAPTCHA_DIR, image_filename)
+        if cv2.imwrite(full_path, img_np):
+            rel_path = os.path.relpath(full_path, script_dir)
+            print(f"Saved captcha image: {rel_path}")
+        else:
+            rel_path = os.path.relpath(full_path, script_dir)
+            print(f"Failed to save captcha image: {rel_path}")
+        return image_filename
+    except Exception as e:
+        print(f"Exception during saving captcha image: {str(e)}")
+        return None
+
+def fetch_captcha_code(fid):
+    attempts = 0
+    while attempts < 10:
+        payload = encode_data({"fid": fid, "time": int(time.time() * 1000), "init": "0"})
+        response = make_request(CAPTCHA_URL, payload)
+        if response and response.status_code == 200:
+            try:
+                captcha_data = response.json()
+                if captcha_data.get("code") == 1 and captcha_data.get("msg") == "CAPTCHA GET TOO FREQUENT.":
+                    log("Captcha fetch too frequent, sleeping before retry...")
+                    time.sleep(CAPTCHA_SLEEP)
+                    continue
+
+                if "data" in captcha_data and "img" in captcha_data["data"]:
+                    img_field = captcha_data["data"]["img"]
+                    if img_field.startswith("data:image"):
+                        img_base64 = img_field.split(",", 1)[1]
+                    else:
+                        img_base64 = captcha_data["data"]["img"]
+                    img_bytes = base64.b64decode(img_base64)
+
+                    nparr = np.frombuffer(img_bytes, np.uint8)
+                    img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                    result = reader.readtext(img_bytes, detail=0)
+                    captcha_code = result[0].strip().replace(' ', '') if result else 'EMPTY'
+
+                    if getattr(args, 'all_images', False) or not (captcha_code.isalnum() and len(captcha_code) == 4):
+                        save_captcha_image(img_np, fid, attempts, captcha_code)
+
+                    if captcha_code.isalnum() and len(captcha_code) == 4:
+                        log(f"Recognized captcha: {captcha_code}")
+                        return captcha_code
+                    else:
+                        log(f"Invalid captcha format: '{captcha_code}', refetching...")
+                else:
+                    log("Captcha image missing in response, refetching...")
+            except Exception as e:
+                failed_path = os.path.join(FAILED_CAPTCHA_DIR, f"fid{fid}_exception_{int(time.time())}.png")
+                with open(failed_path, "wb") as f:
+                    f.write(img_bytes)
+                rel_failed = os.path.relpath(failed_path, script_dir)
+                log(f"Saved failed captcha image to {rel_failed}")
+                log(f"Error solving captcha: {str(e)}")
+        else:
+            log("Failed to fetch captcha, retrying...")
+
+        attempts += 1
+        time.sleep(random.uniform(2.0, 5.0))
+
+    raise Exception("Failed to fetch valid captcha after multiple attempts")
+
 def log(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} - {message}"
-
     try:
         print(log_entry)
     except UnicodeEncodeError:
         cleaned = log_entry.encode('utf-8', errors='replace').decode('ascii', errors='replace')
         print(cleaned)
-
     try:
         with open(LOG_FILE, "a", encoding="utf-8-sig") as f:
             f.write(log_entry + "\n")
     except Exception as e:
-        print(f"{timestamp} - LOGGING ERROR: Could not write to {LOG_FILE}. Error: {e}")
-        print(f"{timestamp} - ORIGINAL MESSAGE: {log_entry}")
+        print(f"{timestamp} - LOGGING ERROR: {str(e)}")
 
-# Generate the sign, an MD5 hash sent with the POST payload
 def encode_data(data):
     secret = WOS_ENCRYPT_KEY
     sorted_keys = sorted(data.keys())
-
-    encoded_data = "&".join(
-        [
-            f"{key}={json.dumps(data[key]) if isinstance(data[key], dict) else data[key]}"
-            for key in sorted_keys
-        ]
-    )
-
+    encoded_data = "&".join([f"{key}={json.dumps(data[key]) if isinstance(data[key], dict) else data[key]}" for key in sorted_keys])
     return {"sign": hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest(), **data}
 
-# Send POST and handle retries if failed
-def make_request(url, payload):
+def make_request(url, payload, headers=None):
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.post(url, json=payload)
-
+            response = requests.post(url, data=payload, headers=headers)
             if response.status_code == 200:
-                response_data = response.json()
-                msg_content = response_data.get("msg", "")
-                if isinstance(msg_content, str) and msg_content.strip('.') == "TIMEOUT RETRY":
-                    if attempt < MAX_RETRIES - 1:
-                        log(f"Attempt {attempt+1}: Server requested retry for payload: {payload.get('fid', 'N/A')}")
-                        time.sleep(RETRY_DELAY)
-                        continue
-                    else:
-                        log(f"Attempt {attempt+1}: Max retries reached after server requested retry for payload: {payload.get('fid', 'N/A')}")
-                        return response
-
                 return response
-
-            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: HTTP {response.status_code}, Response: {response.text[:200]}")
-
+            log(f"Attempt {attempt+1} failed: HTTP {response.status_code}, Response: {response.text[:200]}")
         except requests.exceptions.RequestException as e:
-            log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: RequestException: {str(e)}")
-        except json.JSONDecodeError as e:
-             log(f"Attempt {attempt+1} failed for FID {payload.get('fid', 'N/A')}: JSONDecodeError: {str(e)}. Response text: {response.text[:200]}")
-
-        if attempt < MAX_RETRIES - 1:
-            time.sleep(RETRY_DELAY)
-
-    log(f"All {MAX_RETRIES} attempts failed for request to {url} with FID {payload.get('fid', 'N/A')}.")
+            log(f"Attempt {attempt+1} failed: {str(e)}")
+        time.sleep(RETRY_DELAY)
     return None
 
-# Redeem a gift code for a player and return the response
 def redeem_gift_code(fid, cdk):
     if not str(fid).strip().isdigit():
         log(f"Skipping invalid FID: '{fid}'")
@@ -113,50 +193,55 @@ def redeem_gift_code(fid, cdk):
     fid = str(fid).strip()
 
     try:
-        # === Login Request ===
         login_payload = encode_data({"fid": fid, "time": int(time.time() * 1000)})
         login_resp = make_request(LOGIN_URL, login_payload)
-
         if not login_resp:
-             return {"msg": "Login request failed after retries"}
+            return {"msg": "Login request failed after retries"}
 
-        try:
-            login_data = login_resp.json()
-            if login_data.get("code") != 0:
-                login_msg = login_data.get('msg', 'Unknown login error')
-                log(f"Login failed for {fid}: Code {login_data.get('code')}, Message: {login_msg}")
-                return {"msg": f"Login failed: {login_msg}"}
+        login_data = login_resp.json()
+        if login_data.get("code") != 0:
+            login_msg = login_data.get('msg', 'Unknown login error')
+            log(f"Login failed for {fid}: {login_data.get('code')}, {login_msg}")
+            return {"msg": f"Login failed: {login_msg}"}
 
-            nickname = login_data.get("data", {}).get("nickname")
-            log(f"Processing {nickname or 'Unknown Player'} ({fid})")
+        nickname = login_data.get("data", {}).get("nickname")
+        log(f"Processing {nickname or 'Unknown Player'} ({fid})")
 
-        except json.JSONDecodeError:
-             log(f"Login response for {fid} was not valid JSON: {login_resp.text[:200]}")
-             return {"msg": "Login response invalid JSON"}
+        for attempt in range(CAPTCHA_RETRIES):
+            captcha_code = fetch_captcha_code(fid)
+            redeem_payload = encode_data({
+                "fid": fid,
+                "cdk": cdk,
+                "captcha_code": captcha_code,
+                "time": int(time.time() * 1000)
+            })
+            redeem_resp = make_request(REDEEM_URL, redeem_payload)
+            if not redeem_resp:
+                return {"msg": "Redemption request failed after retries"}
 
-        # === Redeem Request ===
-        redeem_payload = encode_data({
-            "fid": fid,
-            "cdk": cdk,
-            "time": int(time.time() * 1000)
-        })
+            redeem_data = redeem_resp.json()
+            msg = redeem_data.get('msg', 'Unknown error').strip('.')
 
-        redeem_resp = make_request(REDEEM_URL, redeem_payload)
+            if msg in ["CAPTCHA CHECK ERROR", "Sign Error", "Server requested retry"]:
+                log(f"{msg}, retrying in a bit... (Attempt {attempt+1}/{CAPTCHA_RETRIES})")
+                time.sleep(random.uniform(2.5, 6.5))
+                continue
+            elif msg == "CAPTCHA CHECK TOO FREQUENT":
+                log(f"Captcha check too frequent, taking a nap for {CAPTCHA_SLEEP} seconds...")
+                time.sleep(CAPTCHA_SLEEP)
+                continue
+            elif msg == "NOT LOGIN":
+                log(f"Session expired or invalid after captcha. Skipping {fid}.")
+                return {"msg": "Session expired after captcha"}
+            else:
+                return redeem_data
 
-        if not redeem_resp:
-            return {"msg": "Redemption request failed after retries"}
-
-        try:
-            return redeem_resp.json()
-        except json.JSONDecodeError:
-            log(f"Redemption response for {fid} was not valid JSON: {redeem_resp.text[:200]}")
-            return {"msg": "Redemption response invalid JSON"}
+        return {"msg": "CAPTCHA retries exhausted"}
 
     except Exception as e:
         log(f"Unexpected error during redemption for {fid}: {str(e)}")
         return {"msg": f"Unexpected Error: {str(e)}"}
 
-# Read player IDs from a CSV file
 def read_player_ids_from_csv(file_path):
     """
     Reads player IDs from a CSV file.
@@ -164,11 +249,10 @@ def read_player_ids_from_csv(file_path):
     Strips whitespace from each ID and ignores empty entries.
     """
     player_ids = []
-    format_detected = "newline" # Assume newline format initially
+    format_detected = "newline"
     try:
         # Using utf-8-sig to handle potential BOM (Byte Order Mark)
         with open(file_path, mode="r", newline="", encoding="utf-8-sig") as file:
-            # Read a small sample to detect format more reliably
             sample = "".join(file.readline() for _ in range(5))
             if ',' in sample:
                 format_detected = "comma-separated"
@@ -190,25 +274,17 @@ def read_player_ids_from_csv(file_path):
         raise
     except Exception as e:
         log(f"Error reading or processing CSV file {file_path}: {str(e)}")
-        return [] # Return empty list on other read errors, allowing script to continue
+        return []
 
     return player_ids
 
-# Print summary of actions
 def print_summary():
     log("\n=== Redemption Complete ===")
     log(f"Successfully redeemed: {counters['success']}")
     log(f"Already redeemed: {counters['already_redeemed']}")
     log(f"Errors/Failures: {counters['errors']}")
 
-# Main script
 if __name__ == "__main__":
-    # Set up command-line argument parsing
-    parser = argparse.ArgumentParser(description="Redeem gift codes for player IDs from a CSV file.")
-    parser.add_argument("--csv", required=True, help="Path to the CSV file containing player IDs (or *.csv for all files in a folder).")
-    parser.add_argument("--code", required=True, help="The gift code to redeem.")
-    args = parser.parse_args()
-
     # Log initialization message
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log(f"\n=== Starting redemption for gift code: {args.code} at {start_time} ===")
