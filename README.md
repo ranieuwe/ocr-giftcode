@@ -185,7 +185,7 @@ Additionally, a new folder named `failed_captchas_YYYYMMDD_HHMMSS` (where the ti
 ### v2.3.0 (Current Version)
 - Integrated OCR (EasyOCR) to automatically read and submit CAPTCHA codes required by the redemption API.
 - Added `easyocr`, `opencv-python`, `numpy`, and PyTorch (`torch`, `torchvision`, `torchaudio`) for OCR.
-- Saves attempted CAPTCHA images with OCR results in the filename to a unique run folder (`failed_captchas_YYYYMMDD_HHMMSS`) for debugging.
+- Saves attempted CAPTCHA images with OCR results in the filename to a subfolder (`failed_captchas`) for debugging.
 - Enhanced retry logic specifically for CAPTCHA-related errors (`CAPTCHA CHECK ERROR`, `Sign Error`, `CAPTCHA CHECK TOO FREQUENT`).
 
 ### v2.2.0
