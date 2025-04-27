@@ -14,7 +14,7 @@ Python script that automates the process of redeeming gift codes in the game **W
 - **Error Handling**: Provides clear error messages for missing/invalid inputs, API responses, and CAPTCHA failures.
 - **Retry Logic**: Automatically retries failed requests when the server indicates temporary issues (e.g., `TIMEOUT RETRY`) or CAPTCHA errors.
 - **Verbose Logging**: Shows timestamp, player nickname (if available), ID, and CAPTCHA status during processing. Logs all output to a file (`redeemed_codes.txt`).
-- **CAPTCHA Image Logging**: Saves attempted CAPTCHA images to a unique folder (`failed_captchas_YYYYMMDD_HHMMSS`) for debugging purposes.
+- **CAPTCHA Image Logging**: Saves attempted CAPTCHA images to a folder (`failed_captchas`) for debugging purposes.
 - **GPU Acceleration**: Optionally enable GPU for faster OCR processing if available (`--use-gpu` flag).
 - **Save All Captcha Images**: Optionally save every fetched CAPTCHA image regardless of OCR success (`--all-images` flag).
 - **Summary Report**: Provides a summary of successful redemptions, already redeemed codes, and errors at the end.
