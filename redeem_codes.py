@@ -305,8 +305,8 @@ def fetch_captcha_code(fid, retry_queue=None):
                         counters["captcha_success"] += 1
                         if first_attempt_success:
                             counters["captcha_first_try"] += 1
-                        if retry_needed:
-                            counters["captcha_retry"] += 1
+                        if attempts > 0:
+                            counters["captcha_retry"] += attempts
                         return captcha_code, retry_queue
                     else:
                         log(f"Invalid captcha format: '{captcha_code}', refetching...")
