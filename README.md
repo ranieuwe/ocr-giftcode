@@ -15,7 +15,7 @@ Python script that automates the process of redeeming gift codes in the game **W
 - **Retry Logic**: Automatically retries failed requests when the server indicates temporary issues (e.g., `TIMEOUT RETRY`) or CAPTCHA errors.
 - **Verbose Logging**: Shows timestamp, player nickname (if available), ID, and CAPTCHA status during processing. Logs all output to a file (`redeemed_codes.txt`).
 - **CAPTCHA Image Logging**: Optionally saves CAPTCHA images to a folder (`failed_captchas`) for debugging purposes.
-- **GPU Acceleration**: Optionally enable GPU for faster OCR processing if available (`--use-gpu` flag).
+- **GPU Acceleration**: Optional GPU support for faster OCR processing, with specific device selection (integrated or discrete GPU) via the `--use-gpu` flag.
 - **Save All Captcha Images**: Optionally save every fetched CAPTCHA image regardless of OCR success (`--all-images` flag).
 - **Summary Report**: Provides a summary of successful redemptions, already redeemed codes, errors and helpful statistics at the end.
 - **Rate Limiting**: Includes a configurable delay between requests to avoid triggering API rate limits, with specific handling for CAPTCHA frequency limits.
@@ -91,7 +91,7 @@ python redeem_codes.py --csv <path_or_pattern> --code <gift_code> [options]
     *   The pattern `*.csv` to process all `.csv` files located in the *same directory as the script itself*.
 -   `--code`: The gift code you want to redeem (e.g., `WOS2025`).
 -   `--all-images`: Save all CAPTCHA images regardless of OCR success.
--   `--use-gpu`: Enable GPU for EasyOCR reader.
+-   `--use-gpu`: Enable GPU for EasyOCR reader. Optionally specify a device ID (e.g., `--use-gpu 0` for integrated GPU, `--use-gpu 1` for discrete GPU).
 
 ### Examples
 
@@ -115,10 +115,79 @@ python redeem_codes.py --csv <path_or_pattern> --code <gift_code> [options]
     python redeem_codes.py --csv "*.csv" --code ILoveWOS
     ~~~
 
-*   **Process with GPU acceleration:**
+*   **Process with GPU acceleration (auto-select first available GPU):**
     ~~~bash
     python redeem_codes.py --csv "*.csv" --code ILoveWOS --use-gpu
     ~~~
+
+*   **Process with specific GPU device (e.g., discrete GPU):**
+    ~~~bash
+    python redeem_codes.py --csv "*.csv" --code ILoveWOS --use-gpu 1
+    ~~~
+
+---
+
+## GPU Support
+
+Version 2.4.5 adds enhanced GPU support with the ability to select specific GPU devices, including discrete GPUs. This can significantly accelerate CAPTCHA recognition and improve overall script performance.
+
+### How GPU Support Works
+
+- The script uses PyTorch's GPU capabilities to run EasyOCR on your GPU.
+- You can specify which GPU to use when you have multiple GPUs (integrated and discrete).
+- Device IDs typically start at 0 (often the integrated GPU) with additional GPUs (like discrete/dedicated cards) at 1, 2, etc.
+
+### Setting Up NVIDIA GPU Support
+
+If you don't have a CUDA-capable GPU, the script will automatically fall back to CPU mode.
+
+If you *do* have a CUDA-capable NVIDIA GPU and want to use it:
+
+1. **Install the CUDA toolkit** (e.g. CUDA 11.8).
+   * The CUDA toolkit provides the necessary libraries for GPU computing.
+   * cuDNN (CUDA Deep Neural Network library) is an additional library that is often mentioned alongside CUDA, but is typically not required for basic PyTorch GPU usage with this script.
+2. **Reinstall PyTorch with CUDA support**:
+   ```bash
+   pip uninstall torch torchvision
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+   ```
+   (Use the appropriate CUDA version number; cu118 = CUDA 11.8)
+
+3. **Verify your GPU setup with Python**:
+   ```python
+   import torch
+   print(torch.cuda.is_available(), torch.version.cuda) 
+   print(torch.cuda.device_count(), "devices available")
+   for i in range(torch.cuda.device_count()):
+       print(f"Device {i}: {torch.cuda.get_device_name(i)}")
+   ```
+   You should see `True` and a CUDA version string, followed by your available GPU devices.
+
+### Setting Up AMD GPU Support
+
+EasyOCR can work with AMD GPUs using ROCm (Radeon Open Compute), though support is more limited compared to NVIDIA GPUs:
+
+1. **Install ROCm** platform (follow instructions at the [ROCm Installation Guide](https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html)).
+2. **Install PyTorch with ROCm support**:
+   ```bash
+   pip uninstall torch torchvision
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm5.4.2
+   ```
+   (Use the appropriate ROCm version; check compatibility with your GPU model)
+
+3. **Verify your setup**:
+   ```python
+   import torch
+   print(torch.cuda.is_available())  # Should return True if ROCm is working
+   print(torch.cuda.device_count(), "devices available")
+   ```
+
+5. **Important note**: AMD GPU support is more experimental and may not work with all AMD cards. The script should fall back to CPU mode if your AMD GPU isn't properly detected.
+
+### Using the Script with GPU Support
+
+- For auto-selection: `--use-gpu`
+- For specific device: `--use-gpu 0` (often integrated) or `--use-gpu 1` (often discrete)
 
 ---
 
@@ -127,7 +196,7 @@ python redeem_codes.py --csv <path_or_pattern> --code <gift_code> [options]
 ### Sample Run (including CAPTCHA messages)
 
 ~~~plaintext
-Using CPU. Note: This module is much faster with a GPU.
+Using GPU device 1: NVIDIA GeForce RTX 3080
 2025-04-27 17:12:38 - 
 === Starting redemption for gift code: mK6DNry4w at 2025-04-27 17:12:38 ===
 2025-04-27 17:12:38 - Reading TSK.csv (detected format: newline)
@@ -188,12 +257,26 @@ If the `--all-images` flag is used, a folder named `failed_captchas` will be cre
     *   EasyOCR performance can vary. Ensure it's installed correctly. Using a GPU (if available and configured correctly with PyTorch) can improve speed and sometimes accuracy.
     *   If `CAPTCHA CHECK TOO FREQUENT` occurs often, the script will automatically add the player ID to a retry queue, continuing with other players.
 9.  **EasyOCR Model Downloads**: The first time you run the script (or `easyocr`), it may need to download language models. Ensure you have an internet connection.
+10. **GPU Issues**: If you get errors when using `--use-gpu`:
+    * **For NVIDIA GPUs**:
+      - Check your CUDA installation with the verification script in the GPU Support section
+      - Make sure your PyTorch version matches your CUDA version
+      - For most users, installing just the NVIDIA drivers and the PyTorch CUDA package is sufficient
+    * **For AMD GPUs**:
+      - Make sure ROCm is properly installed and your GPU is supported
+      - AMD support is experimental and may not work with all models
+    * Try specifying a different device ID (`--use-gpu 0` or `--use-gpu 1`)
+    * If problems persist, run without the `--use-gpu` flag to use CPU mode
 
 ---
 
 ## Changelog
 
-### v2.4.0 (Current Version)
+### v2.4.5 (Current Version)
+- Added support for discrete GPUs with device selection via `--use-gpu` parameter
+- Improved GPU error handling with graceful fallback to CPU
+
+### v2.4.0
 - Added improved CAPTCHA preprocessing with multiple image enhancement techniques
 - Added comprehensive captcha statistics in summary output
 - Added progress tracking with current/total indicators

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Whiteout Gift Code Redeemer Script Version 2.4.0
-# Enhanced EasyOCR with preprocessing, improved timers, statistics and better retries
+# Whiteout Gift Code Redeemer Script Version 2.4.5
+# Patch to enable dGPU support
 
 import os
 import warnings
@@ -40,7 +40,8 @@ MIN_CONFIDENCE = 0.4  # Minimum confidence to accept a result
 def parse_args():
     parser = argparse.ArgumentParser(description="Redeem gift codes with optional OCR settings and code sources")
     parser.add_argument('--all-images', action='store_true', help='Save all captcha images regardless of OCR success')
-    parser.add_argument('--use-gpu', action='store_true', help='Enable GPU for EasyOCR reader')
+    parser.add_argument('--use-gpu', type=int, nargs='?', const=0, default=None, 
+                        help='Enable GPU and specify device ID (0 for iGPU, 1 for dGPU, etc. Default: None for CPU)')
     parser.add_argument('--csv', type=str, help='Path to CSV file containing codes')
     parser.add_argument('--code', type=str, help='Single code to redeem')
     parser.add_argument('codes', nargs='*', help='Gift codes to redeem directly')
@@ -73,10 +74,24 @@ try:
 except Exception as e:
     print(f"Error creating directory: {str(e)}")
 
-# Initialize OCR reader based on args.use_gpu
+# Initialize OCR reader based on args
 args.all_images = getattr(args, 'all_images', False)
-args.use_gpu = getattr(args, 'use_gpu', False)
-reader = easyocr.Reader(['en'], gpu=args.use_gpu)
+args.use_gpu = getattr(args, 'use_gpu', None)
+
+# EasyOCR GPU handling
+if args.use_gpu is not None:
+    import torch
+    try:
+        torch.cuda.set_device(args.use_gpu)
+        gpu_name = torch.cuda.get_device_name(args.use_gpu)
+        print(f"Using GPU device {args.use_gpu}: {gpu_name}")
+        reader = easyocr.Reader(['en'], gpu=True)
+    except Exception as e:
+        print(f"GPU error: {str(e)}. Falling back to CPU.")
+        reader = easyocr.Reader(['en'], gpu=False)
+else:
+    print("Using CPU only (no GPU acceleration)")
+    reader = easyocr.Reader(['en'], gpu=False)
 
 RESULT_MESSAGES = {
     "SUCCESS": "Successfully redeemed",
