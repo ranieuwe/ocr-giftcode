@@ -571,9 +571,14 @@ if __name__ == "__main__":
     
     # Continue processing until all FIDs are done
     processed_fids = set()
-    
+    stuck_counter = 0  # To detect when we're stuck
+    max_stuck_loops = 10  # Maximum number of loops with no progress before we exit
+    retry_attempts = {}  # Track number of retry attempts for each FID
+    MAX_RETRY_ATTEMPTS = 5  # Maximum number of times we'll retry a FID before giving up
+
     while len(processed_fids) < len(all_player_ids):
         current_time = time.time()
+        initial_processed_count = len(processed_fids)
         
         # Process regular queue
         for fid in all_player_ids:
@@ -584,6 +589,10 @@ if __name__ == "__main__":
             if fid in retry_queue and retry_queue[fid] > current_time:
                 continue
                 
+            # Initialize retry counter for this FID if not exists
+            if fid not in retry_attempts:
+                retry_attempts[fid] = 0
+                
             result, retry_queue = redeem_gift_code(fid, args.code, retry_queue)
             
             raw_msg = result.get('msg', 'Unknown error').strip('.')
@@ -591,13 +600,23 @@ if __name__ == "__main__":
             
             # Check if this FID was put in the retry queue
             if raw_msg in ["Added to retry queue", "Max retries reached, added to retry queue", 
-                         "In cooldown", "Added to retry queue due to captcha rate limit"]:
-                log(f"FID {fid} will be retried later: {friendly_msg}")
+                        "In cooldown", "Added to retry queue due to captcha rate limit"]:
+                retry_attempts[fid] += 1
+                
+                if retry_attempts[fid] >= MAX_RETRY_ATTEMPTS:
+                    log(f"FID {fid} failed after {MAX_RETRY_ATTEMPTS} retry attempts, marking as error")
+                    processed_fids.add(fid)
+                    counters["errors"] += 1
+                    error_details[fid] = f"Failed after {MAX_RETRY_ATTEMPTS} retry attempts"
+                    if fid in retry_queue:
+                        del retry_queue[fid]
+                else:
+                    log(f"FID {fid} will be retried later: {friendly_msg} (Attempt {retry_attempts[fid]}/{MAX_RETRY_ATTEMPTS})")
                 continue
                 
             # Mark as processed if not in retry queue
             if raw_msg not in ["Added to retry queue", "Max retries reached, added to retry queue", 
-                             "In cooldown", "Added to retry queue due to captcha rate limit"]:
+                            "In cooldown", "Added to retry queue due to captcha rate limit"]:
                 processed_fids.add(fid)
             
             # Exit immediately if code is expired or claim limit reached
@@ -633,7 +652,6 @@ if __name__ == "__main__":
             log(f"{len(waiting_fids)} FIDs in cooldown. Next retry in ~{int(wait_time)} seconds.")
             log(f"Progress: {len(processed_fids)}/{len(all_player_ids)} FIDs processed")
             time.sleep(wait_time)
-
         elif len(processed_fids) < len(all_player_ids):
             # Double check if there are any FIDs that need processing but aren't in retry queue
             remaining = set(all_player_ids) - processed_fids
@@ -643,7 +661,51 @@ if __name__ == "__main__":
                 log(f"Found {len(remaining_not_in_queue)} FIDs that need processing but aren't in retry queue")
                 continue
             else:
-                log(f"All remaining FIDs are in retry queue but not ready yet. Waiting...")
+                # We might be stuck - check if we're making progress
+                if len(processed_fids) == initial_processed_count:
+                    stuck_counter += 1
+                    log(f"No progress made in this loop. Stuck counter: {stuck_counter}/{max_stuck_loops}")
+                    
+                    if stuck_counter >= max_stuck_loops:
+                        log("No progress after multiple attempts. Some FIDs may be stuck in retry queue.")
+                        log("Checking remaining FIDs for final processing attempt...")
+                        
+                        # Attempt to process each remaining FID one last time
+                        for fid in remaining:
+                            log(f"Final processing attempt for FID: {fid}")
+                            # Reset retry queue entry to allow immediate processing
+                            if fid in retry_queue:
+                                del retry_queue[fid]
+                            
+                            # Force one last attempt
+                            result, _ = redeem_gift_code(fid, args.code, {})
+                            raw_msg = result.get('msg', 'Unknown error').strip('.')
+                            friendly_msg = RESULT_MESSAGES.get(raw_msg, raw_msg)
+                            
+                            # Mark as processed regardless of result
+                            processed_fids.add(fid)
+                            
+                            # Update counters based on final result
+                            if raw_msg in ["SUCCESS", "SAME TYPE EXCHANGE"]:
+                                counters["success"] += 1
+                            elif raw_msg == "RECEIVED":
+                                counters["already_redeemed"] += 1
+                            elif raw_msg in ["TIMEOUT RETRY", "Server requested retry"]:
+                                counters["errors"] += 1
+                                error_details[fid] = "Final attempt: Server timeout/retry"
+                            else:
+                                counters["errors"] += 1
+                                error_details[fid] = f"Final attempt: {friendly_msg}"
+                            
+                            log(f"Final result for {fid}: {friendly_msg}")
+                            time.sleep(DELAY)
+                        
+                        break
+                else:
+                    # We made progress, reset the counter
+                    stuck_counter = 0
+                    
+                # Put a small delay to avoid tight looping
                 time.sleep(5)
                 continue
     
