@@ -1,3 +1,5 @@
 *.csv
 *redeemed_codes*
 failed_*
+*venv*
+captcha_images
