@@ -125,6 +125,7 @@ def parse_args():
     parser.add_argument('--use-gpu', type=int, nargs='?', const=0, default=None,
                         help='Enable GPU. EasyOCR: PyTorch device ID (0, 1,...). CaptchaCracker: TensorFlow (often automatic). ddddocr: ONNX Runtime (can use CUDA/DirectML, often automatic). Specify ID mainly for EasyOCR.')
     parser.add_argument('--csv', type=str, help='Path to CSV file or directory containing FIDs')
+    parser.add_argument('--enrich', type=str, help='Write player details to a JSON file')
     parser.add_argument('--code', type=str, required=True, help='Single code to redeem (REQUIRED)')
     parser.add_argument('--save-images', type=int, default=0, choices=[0, 1, 2, 3],
                         help='Image saving mode: 0=None (default), 1=Failed CAPTCHA only, 2=Successful CAPTCHA only, 3=All (Success/Failed)')
@@ -844,6 +845,7 @@ def redeem_gift_code(fid, cdk, retry_queue=None):
             # 3. Process Redemption Response
             try:
                 final_redeem_data = redeem_resp.json()
+                final_redeem_data["details"] = login_data.get("data", {})
                 msg = final_redeem_data.get('msg', 'Unknown error').strip('.')
                 err_code = final_redeem_data.get('err_code')
 
@@ -1004,6 +1006,53 @@ def read_player_ids_from_csv(file_path):
     log(f"Error: Could not decode file {os.path.basename(file_path)} with tried encodings: {encodings_to_try}")
     return []
 
+def update_user_data(user_data_path, user_details):    
+    # Drop unwanted keys and rename keys in one step
+    key_mapping = {"kid": "state", "stove_lv": "level"}
+    unwanted_keys = {"stove_lv_content", "avatar_image", "total_recharge_amount"}
+    
+    final_dict = {
+        key_mapping.get(key, key): value
+        for key, value in user_details.items()
+        if key not in unwanted_keys
+    }
+
+    try:
+        with open(user_data_path, "r", encoding="utf-8") as file:
+            existing_data = json.load(file)
+
+        # Check if user already exists in the JSON
+        for user in existing_data:
+            if user.get("fid") == final_dict.get("fid"):
+                user.update(final_dict)
+                break
+        else:
+            # Add new user if not found
+            existing_data.append(final_dict)
+
+        # Write updated data back to the JSON file
+        with open(user_data_path, "w", encoding="utf-8") as file:
+            json.dump(existing_data, file, ensure_ascii=False, indent=4)
+        log(f"User data updated successfully for FID {final_dict.get('fid')}.")
+    except Exception as e:
+        log(f"Error updating user data: {e}", level='error')
+
+def initialize_user_data_file(user_data_file):
+    # Initialize or validate a JSON file.
+    if os.path.isfile(user_data_file):
+        log(f"Using existing user data file: {user_data_file}")
+        try:
+            with open(user_data_file, "r", encoding="utf-8") as file:
+                json.load(file)  # Attempt to parse the JSON file
+        except json.JSONDecodeError as j:
+            log(f"Error: User data file '{user_data_file}' is malformed. Please fix or delete the file.", level='error')
+            raise Exception(f"Malformed JSON file: {user_data_file}. The error encountered is {j}")
+    else:
+        log(f"Creating a new user data file: {user_data_file}")
+        with open(user_data_file, "w", encoding="utf-8") as file:
+            json.dump([], file, ensure_ascii=False, indent=4)
+        log(f"Initialized user data file: {user_data_file}")
+
 def print_summary():
     script_end_time = time.time()
     total_seconds = script_end_time - script_start_time
@@ -1136,6 +1185,17 @@ if __name__ == "__main__":
 
     log(f"Total unique valid player IDs to process: {len(all_player_ids)}")
 
+    # --- If enriching, create or validate data file ---
+    json_data_spec = None    
+    if args.enrich:
+        json_data_spec = args.enrich or "data.json"
+        log(f"Enriching user data to  {json_data_spec}")
+        try:
+            initialize_user_data_file(json_data_spec)
+        except Exception as e:
+            log(f"Error initializing user data file: {str(e)}", level='error')
+            sys.exit(1)
+    
     # --- Redemption Loop ---
     processed_fids = set()
     stop_processing = False
@@ -1185,6 +1245,8 @@ if __name__ == "__main__":
             is_final_state = not is_queued_for_retry
             if is_final_state:
                 processed_fids.add(fid)
+                if args.enrich:
+                    update_user_data(json_data_spec, result.get('details', {}))                    
                 if raw_msg in ["SUCCESS", "SAME TYPE EXCHANGE"]:
                     counters["success"] += 1
                 elif raw_msg == "RECEIVED":
