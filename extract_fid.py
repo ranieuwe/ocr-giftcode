@@ -99,10 +99,20 @@ default_ocr = "paddleocr" if PADDLEOCR_AVAILABLE else ocr_choices[0]
 parser.add_argument("--input", required=True, help="Path to the input video file.")
 parser.add_argument("--ocr-method", choices=ocr_choices, default=default_ocr,
                     help=f"OCR method to use. Available: {', '.join(ocr_choices)}. (Default: {default_ocr})")
-parser.add_argument("--output-file", default="output.csv", help="Path to the output CSV file (default: output.csv).")
+parser.add_argument("--output-file", help="Path to the output CSV file. If not specified, the input filename will be used with a .csv extension.")
 parser.add_argument("--enable-denoising", action="store_true", help="Enable denoising of the grayscale image.")
 parser.add_argument("--frame-skip", type=int, default=10, help="Process every nth frame (default: 10).")
 args = parser.parse_args()
+
+# Determine the output file name
+if not args.output_file:
+    # Replace .mp4 with .csv in the input filename
+    if args.input.lower().endswith(".mp4"):
+        args.output_file = args.input[:-4] + ".csv"
+    else:
+        args.output_file = args.input + ".csv"
+
+print(f"Output file will be saved as: {args.output_file}")
 
 # Check if the input file exists
 if not os.path.exists(args.input):
